@@ -1,0 +1,11 @@
+# Never upload local secrets or build/install folders with `vercel deploy`;
+# keys are set as Vercel environment variables instead.
+.env
+.env.*
+!.env.example
+serviceAccountKey.json
+node_modules
+.venv
+__pycache__
+dist
+.firebase
