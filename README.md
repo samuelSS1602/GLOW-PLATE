@@ -1,13 +1,15 @@
 # GlowPlate
 
-Snap a photo of your meal and GlowPlate estimates its calories, protein, carbs and fat, then tracks them with your water intake against your daily goals. Works on phone and laptop.
+Pick what you ate from a built-in list of everyday South Indian foods and GlowPlate counts the calories, protein, carbs and fat, then tracks them with your water intake against your daily goals. No AI needed. Works on phone and laptop.
+
+**Live:** https://glow-plate.vercel.app
 
 **Developed by [Code Crafters](https://codecrafters-pi.vercel.app/)**
 
 ## What it does
 
 - **Today**: a plate-shaped ring shows calories left, with protein, carbs and fat arcs, a water tracker (tap glasses or add 250/500 ml), and today's meals. A 🔥 streak counts days in a row where you hit all your goals, nudges remind you about unlogged meals, water and protein through the day, and finishing a day (or your water) gets a little celebration.
-- **Add a meal**: take a photo or pick one from the gallery, or just type what you ate ("2 dosa, sambar, 1 egg"), and get an itemised estimate you can edit before saving. You can also type the numbers yourself. Each meal also gets a skin and hair tip.
+- **Add a meal**: search or browse about 130 foods (idli, dosa, sambar, rice, chicken curry, sundal, fruits, drinks…, with Tamil names too), tap **+** and set the amount with − / +. Totals update as you go. Foods you eat often show first under **Recent**, anything missing can be added as your own food, and a photo can be kept with the meal. Each meal gets skin and hair tips worked out from its foods (`frontend/src/lib/foods.js`).
 - **Edit & repeat**: open any saved meal to edit, delete, or **Add again today** (the same breakfast every day in one tap).
 - **History**: a month **calendar** showing which days you finished, the **last 7 days** with weekly insights (what you hit, what you miss most), and a **weight** tracker with a progress chart.
 - **My plan**: your targets, a sample South Indian day, and foods for skin glow and hair growth.
@@ -18,15 +20,15 @@ Starting goals for 22 yrs, 87 kg, 176 cm, light activity, fat loss: about **2,05
 ## How it fits together
 
 ```
-React (Vite) ──photo or text──▶ Python FastAPI ──▶ Claude model ──▶ nutrition JSON
-     │                               └─ checks the Firebase login token
+React (Vite) + built-in food list
      ├─ Firebase Auth (Google sign-in, remembered on the device)
-     └─ Firestore (cached on the device)
-          users/{uid}, users/{uid}/meals, users/{uid}/photos/{mealId},
-          users/{uid}/water/{date}, users/{uid}/weights/{date}
+     ├─ Firestore (cached on the device)
+     │    users/{uid}, users/{uid}/meals, users/{uid}/photos/{mealId},
+     │    users/{uid}/water/{date}, users/{uid}/weights/{date}
+     └─ optional: Python FastAPI ──▶ Claude model (AI estimates, off by default)
 ```
 
-The AI key stays on the Python server, never in the browser. It needs credits on your Anthropic account (console.anthropic.com > Plans & Billing); without them, photo and typed-meal analysis return a "credit balance is too low" error.
+**AI is optional.** The app works fully without it. To add "Estimate with AI" from a photo or description, run the Python backend with an `ANTHROPIC_API_KEY` from an account with credits (console.anthropic.com > Plans & Billing) and set `VITE_ENABLE_AI=true` in `frontend/.env` (on Vercel: an environment variable, then redeploy). The key stays on the server, never in the browser.
 
 Everything runs on Firebase's free **Spark** plan. Meal photos are saved as small thumbnails (about 20–40 KB) in their own Firestore documents, so Firebase Storage, which needs the paid Blaze plan, isn't used, and lists of meals stay small.
 
@@ -53,7 +55,7 @@ You sign in once per browser. The login is kept on the device until you press **
    firebase deploy --only firestore:rules
    ```
 
-### 2. Backend (Python 3.10+)
+### 2. Backend (optional, only for AI estimates; Python 3.10+)
 ```bash
 cd backend
 python -m venv .venv
@@ -90,6 +92,6 @@ Every push to `main` redeploys. The backend can also run anywhere else with its 
 
 ## Notes
 
-- Photo estimates are typically within 15–25% for home food. The editable item list is there so you can correct portions.
+- Food values are typical home portions (IFCT/NIN-style averages), usually within 15–25% of your actual plate. Add oil or ghee as extras, or change amounts, when yours differ.
 - Firestore queries use a single field (or the document ID), so no composite indexes are needed.
 - Change the AI model with `ANTHROPIC_MODEL` in `backend/.env`.

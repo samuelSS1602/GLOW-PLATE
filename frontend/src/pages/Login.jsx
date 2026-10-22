@@ -57,10 +57,10 @@ export default function Login() {
           </>
         ) : (
           <>
-            <h1>Photograph your plate. Know what you ate.</h1>
+            <h1>Know what's on your plate.</h1>
             <p>
-              Snap a meal and GlowPlate estimates its calories, protein, carbs and fat, then tracks them
-              with your water against the goals in your plan.
+              Pick what you ate from a list of everyday South Indian foods and GlowPlate counts the calories,
+              protein, carbs and fat, then tracks them with your water against the goals in your plan.
             </p>
             <button className="btn btn-primary btn-lg" onClick={() => go(null)} disabled={busy}>
               <GoogleIcon /> {busy ? "Signing in…" : "Continue with Google"}

@@ -290,16 +290,55 @@ code { background: var(--leaf-soft); padding: 1px 6px; border-radius: 6px; font-
 .empty-cta svg { color: var(--leaf); flex-shrink: 0; }
 .empty-cta b { color: var(--ink); }
 
-/* Add meal */
-.picker { align-items: center; text-align: center; padding: 40px 22px; gap: 12px; }
-.picker-art { width: 96px; height: 96px; border-radius: 50%; display: grid; place-items: center; background: var(--plate); color: var(--leaf); box-shadow: inset 0 0 0 10px var(--rim); margin-bottom: 6px; }
-.picker-btns { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
-.picker .link-btn { margin-top: 4px; }
-.back-link { align-self: flex-start; padding-top: 0; }
-.add-grid { display: grid; gap: 18px; align-items: start; }
-@media (min-width: 800px) { .add-grid { grid-template-columns: 1fr 1.15fr; } .photo-card { position: sticky; top: 24px; } }
+/* Add meal: food list on one side, the meal being built on the other */
+.add-layout { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+.add-side { display: flex; flex-direction: column; gap: 18px; }
+.add-page.editing .add-side { order: -1; }
+@media (min-width: 900px) {
+  .add-layout { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); }
+  .add-side { position: sticky; top: 24px; }
+}
+.search {
+  display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; color: var(--ink-2);
+  border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface-2);
+}
+.search:focus-within { border-color: var(--leaf); }
+.search input { flex: 1; min-width: 0; border: 0; background: none; padding: 12px 0; font-size: 1rem; color: var(--ink); outline: none; }
+.search input::-webkit-search-cancel-button { display: none; }
+.search-clear { display: grid; place-items: center; padding: 6px; border: 0; border-radius: 50%; background: none; color: var(--ink-2); cursor: pointer; }
+.chips { display: flex; gap: 8px; overflow-x: auto; margin: 0 -20px; padding: 0 20px 4px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+@media (min-width: 900px) { .chips { flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; } }
+.chip {
+  flex-shrink: 0; padding: 7px 14px; border-radius: 999px; border: 1.5px solid var(--line); cursor: pointer;
+  background: var(--surface); color: var(--ink-2); font-weight: 700; font-size: .85rem;
+  transition: background-color .2s ease, color .2s ease, border-color .2s ease;
+}
+.chip.on { background: var(--leaf-deep); border-color: var(--leaf-deep); color: #fff; }
+.pick-list { list-style: none; margin: 0; padding: 0; }
+.pick-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.pick-row:last-child { border-bottom: 0; }
+.pick-row.picked .pick-info b { color: var(--leaf-ink); }
+.pick-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pick-info b { font-weight: 700; }
+.pick-info span { font-size: .8rem; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.stepper { display: inline-flex; align-items: center; flex-shrink: 0; padding: 3px; border-radius: 999px; background: var(--leaf-soft); }
+.stepper button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--surface); color: var(--leaf-ink); cursor: pointer; }
+.stepper span { min-width: 30px; text-align: center; font-weight: 800; color: var(--leaf-ink); font-variant-numeric: tabular-nums; }
+.meal-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.meal-item { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 14px; border-radius: var(--radius); background: var(--surface-2); }
+.photo-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.save-bar {
+  position: sticky; bottom: calc(80px + env(safe-area-inset-bottom)); z-index: 15;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 8px 8px 20px;
+  border-radius: 999px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 12px 32px rgba(0, 0, 0, .14);
+}
+.save-bar p { display: flex; flex-direction: column; line-height: 1.2; }
+.save-bar b { font-family: var(--font-display); font-size: 1.15rem; }
+.save-bar span { font-size: .8rem; font-weight: 600; color: var(--ink-2); }
+@media (min-width: 900px) { .save-bar { bottom: 20px; } }
 .photo { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--surface-2); }
-.photo img { width: 100%; max-height: 420px; object-fit: cover; }
+.photo img { width: 100%; max-height: 260px; object-fit: cover; }
 .photo.scanning::after {
   content: ""; position: absolute; left: 0; right: 0; height: 30%;
   background: linear-gradient(to bottom, transparent, rgba(227, 160, 43, .45), transparent);
@@ -553,16 +592,18 @@ code { background: var(--leaf-soft); padding: 1px 6px; border-radius: 6px; font-
 @keyframes confetti-fall { to { transform: translate3d(var(--x), 110vh, 0) rotate(var(--r)); } }
 
 /* Pages: cards rise in one after another; layout grids pass the stagger to their cards */
-.page > *, :is(.today-grid, .history-grid, .add-grid, .stack) > * {
+.page > *, :is(.today-grid, .history-grid, .add-layout, .add-side, .stack) > * {
   animation: rise .5s var(--ease-out) both;
   animation-delay: calc(var(--base, 0ms) + var(--n, 0) * 60ms);
 }
-:is(.today-grid, .history-grid, .add-grid, .stack) > * { --base: 80ms; }
-:is(.page, .history-grid) > :is(.today-grid, .history-grid, .add-grid, .stack) { animation: none; }
-:is(.page, .today-grid, .history-grid, .add-grid, .stack) > :nth-child(2) { --n: 1; }
-:is(.page, .today-grid, .history-grid, .add-grid, .stack) > :nth-child(3) { --n: 2; }
-:is(.page, .today-grid, .history-grid, .add-grid, .stack) > :nth-child(4) { --n: 3; }
-:is(.page, .today-grid, .history-grid, .add-grid, .stack) > :nth-child(n+5) { --n: 4; }
+:is(.today-grid, .history-grid, .add-layout, .add-side, .stack) > * { --base: 80ms; }
+:is(.page, .history-grid, .add-layout) > :is(.today-grid, .history-grid, .add-layout, .add-side, .stack) { animation: none; }
+:is(.page, .today-grid, .history-grid, .add-layout, .add-side, .stack) > :nth-child(2) { --n: 1; }
+:is(.page, .today-grid, .history-grid, .add-layout, .add-side, .stack) > :nth-child(3) { --n: 2; }
+:is(.page, .today-grid, .history-grid, .add-layout, .add-side, .stack) > :nth-child(4) { --n: 3; }
+:is(.page, .today-grid, .history-grid, .add-layout, .add-side, .stack) > :nth-child(n+5) { --n: 4; }
+.pick-list > * { animation: fade .3s ease both; }
+.meal-items > * { animation: rise .3s var(--ease-out) both; }
 .meal-list > * { animation: fade .4s ease both; }
 .meal-detail { animation: slide-down .3s var(--ease-out) both; }
 .nudge-card { animation: fade .45s ease both; }
@@ -571,7 +612,6 @@ code { background: var(--leaf-soft); padding: 1px 6px; border-radius: 6px; font-
 .checks li:nth-child(3) { animation-delay: .12s; }
 .checks li svg { animation: pop .4s var(--ease-out) .2s both; }
 .pill { animation: pop .35s var(--ease-out) both; }
-.picker-art { animation: pop .6s var(--ease-out) .1s both; }
 .tab.active svg, .side-link.active svg { animation: pop .45s var(--ease-out) both; }
 @media (prefers-reduced-motion: no-preference) {
   .theme-fade, .theme-fade *, .theme-fade *::before, .theme-fade *::after {
@@ -584,10 +624,9 @@ code { background: var(--leaf-soft); padding: 1px 6px; border-radius: 6px; font-
 }
 
 /* Keep single-column grids from growing wider than the phone screen */
-.today-grid, .hero-card, .add-grid, .plan-grid, .profile-grid { grid-template-columns: minmax(0, 1fr); }
+.today-grid, .hero-card, .plan-grid, .profile-grid { grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 640px) { .hero-card { grid-template-columns: 260px minmax(0, 1fr); } }
 @media (min-width: 1100px) { .today-grid { grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); } }
-@media (min-width: 800px) { .add-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); } }
 @media (min-width: 1000px) { .plan-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); } }
 @media (min-width: 860px) { .profile-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 .glass { width: 23px; height: 31px; }

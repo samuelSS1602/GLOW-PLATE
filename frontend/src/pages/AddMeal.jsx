@@ -1,22 +1,25 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Camera, ImagePlus, Sparkles, Trash2, Plus, RotateCcw, PenLine } from "lucide-react";
+import { Camera, ImagePlus, Minus, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { useCountUp } from "../hooks/motion";
+import { useDayLog } from "../hooks/useDayLog";
 import { useToast } from "../components/Toast";
 import { analyzeMeal } from "../lib/api";
 import { saveMeal, updateMeal, deleteMeal, getMeal, getMealPhoto } from "../lib/data";
-import { compressImage, guessMealType, todayKey } from "../lib/utils";
+import { addDays, compressImage, dateRange, guessMealType, todayKey } from "../lib/utils";
+import { CATEGORIES, FOODS, findFood, fmtQty, foodForItem, mealTips, scaleFood, searchFoods, stepFor, summarize } from "../lib/foods";
 
+// The AI estimate needs Anthropic credits on the backend, so it stays hidden unless switched on
+const AI_ENABLED = import.meta.env.VITE_ENABLE_AI === "true";
 const TYPES = ["Breakfast", "Lunch", "Snack", "Dinner"];
 const NUM = ["calories", "protein", "carbs", "fat"];
 const LABEL = { calories: "kcal", protein: "Protein g", carbs: "Carbs g", fat: "Fat g" };
-const BLANK = { name: "", portion: "", calories: 0, protein: 0, carbs: 0, fat: 0 };
-const HINT = {
-  ai: "AI estimate. Check the portions and fix anything that looks off.",
-  manual: "Type the amounts for each food. Add a row for each item.",
-  saved: "Fix anything that looks off, then save.",
-};
+const START_CATEGORY = { Breakfast: "tiffin", Lunch: "rice", Snack: "snacks", Dinner: "tiffin" };
+const RECENT_DAYS = 14;
+
+let lastKey = 0;
+const newKey = () => `item-${++lastKey}`;
 
 const sumItems = (items) => items.reduce(
   (t, it) => Object.fromEntries(NUM.map((k) => [k, t[k] + (Number(it[k]) || 0)])),
@@ -33,7 +36,17 @@ function Total({ value, unit = "", label, pct, className }) {
   );
 }
 
-// /meal/:id opens a saved meal in the same editor
+function Stepper({ qty, name, onStep }) {
+  return (
+    <div className="stepper">
+      <button type="button" onClick={() => onStep(-1)} aria-label={`Less ${name}`}><Minus size={16} /></button>
+      <span aria-live="polite">{fmtQty(qty)}</span>
+      <button type="button" onClick={() => onStep(1)} aria-label={`More ${name}`}><Plus size={16} /></button>
+    </div>
+  );
+}
+
+// /meal/:id opens a saved meal in the same screen
 export function EditMeal() {
   const { id } = useParams();
   return <AddMeal key={id} editId={id} />;
@@ -46,17 +59,21 @@ export default function AddMeal({ editId }) {
   const [params] = useSearchParams();
   const cameraRef = useRef();
   const galleryRef = useRef();
+  const today = todayKey();
 
-  const [mode, setMode] = useState(editId ? "edit" : "pick"); // pick | photo | text | edit
+  const [items, setItems] = useState([]);
+  const [mealType, setMealType] = useState(() => (TYPES.includes(params.get("type")) ? params.get("type") : guessMealType()));
+  const [date, setDate] = useState(today);
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState(null);
   const [blob, setBlob] = useState(null);
   const [preview, setPreview] = useState("");
   const [note, setNote] = useState("");
-  const [mealType, setMealType] = useState(() => (TYPES.includes(params.get("type")) ? params.get("type") : guessMealType()));
-  const [date, setDate] = useState(todayKey());
-  const [result, setResult] = useState(null);
+  const [aiTips, setAiTips] = useState([]);
   const [status, setStatus] = useState(editId ? "loading" : "idle"); // idle | loading | analyzing | saving
   const [error, setError] = useState("");
 
+  // Edit mode: load the saved meal; foods from the list get their steppers back
   useEffect(() => {
     if (!editId) return;
     let live = true;
@@ -67,7 +84,10 @@ export default function AddMeal({ editId }) {
         if (!meal) throw new Error("This meal no longer exists.");
         setMealType(meal.mealType);
         setDate(meal.date);
-        setResult({ items: meal.items || [], tips: meal.tips || [], summary: meal.summary || "", source: "saved" });
+        setItems((meal.items || []).map((it) => {
+          const food = it.foodId && findFood(it.foodId);
+          return { key: newKey(), ...(food ? scaleFood(food, it.qty || 1) : { ...it, foodId: null, qty: null }) };
+        }));
         setStatus("idle");
         const photo = await getMealPhoto(user.uid, meal).catch(() => null);
         if (live && photo) setPreview(photo);
@@ -78,61 +98,86 @@ export default function AddMeal({ editId }) {
     return () => { live = false; };
   }, [editId, user.uid]);
 
+  // The foods you logged most in the last two weeks
+  const recentFrom = addDays(today, -(RECENT_DAYS - 1));
+  const recentLog = useDayLog(user.uid, recentFrom, today);
+  const recent = useMemo(() => {
+    const count = {};
+    dateRange(recentFrom, today).forEach((d) => recentLog.mealsOn(d).forEach((m) => (m.items || []).forEach((it) => {
+      const food = foodForItem(it);
+      if (food) count[food.id] = (count[food.id] || 0) + 1;
+    })));
+    return Object.keys(count).sort((a, b) => count[b] - count[a]).slice(0, 12).map(findFood);
+  }, [recentLog, recentFrom, today]);
+
+  const chips = recent.length ? [["recent", "Recent"], ...CATEGORIES] : CATEGORIES;
+  const activeCategory = category || (recent.length ? "recent" : START_CATEGORY[mealType]);
+  const searching = query.trim().length > 0;
+  const list = searching
+    ? searchFoods(query)
+    : activeCategory === "recent" ? recent : FOODS.filter((f) => f.cat === activeCategory);
+
   const back = () => nav(window.history.state?.idx > 0 ? -1 : "/");
+  const qtyOf = (food) => items.find((it) => it.foodId === food.id)?.qty || 0;
+
+  // Adds a portion of a food (dir 1) or takes one away (dir -1); at zero it leaves the meal
+  const changeFood = (food, dir) => setItems((list) => {
+    const current = list.find((it) => it.foodId === food.id);
+    if (!current) return dir > 0 ? [...list, { key: newKey(), ...scaleFood(food, 1) }] : list;
+    const qty = Math.round((current.qty + dir * stepFor(food)) * 2) / 2;
+    return qty > 0
+      ? list.map((it) => (it === current ? { ...it, ...scaleFood(food, qty) } : it))
+      : list.filter((it) => it !== current);
+  });
+  const addOwn = (name = "") =>
+    setItems((list) => [...list, { key: newKey(), foodId: null, qty: null, name, portion: "", calories: 0, protein: 0, carbs: 0, fat: 0 }]);
+  const editItem = (key, field, val) => setItems((list) => list.map((it) => (it.key === key ? { ...it, [field]: val } : it)));
+  const removeItem = (key) => setItems((list) => list.filter((it) => it.key !== key));
 
   const pick = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    setError(""); setResult(null);
+    setError("");
     try {
       const small = await compressImage(file);
+      if (blob) URL.revokeObjectURL(preview);
       setBlob(small);
       setPreview(URL.createObjectURL(small));
-      setMode("photo");
     } catch (err) { setError(err.message); }
   };
+  const removePhoto = () => { URL.revokeObjectURL(preview); setBlob(null); setPreview(""); };
 
-  const analyze = async () => {
-    if (!blob && !note.trim()) { setError("Describe what you ate first."); return; }
+  const estimate = async () => {
+    if (!blob && !note.trim()) { setError("Add a photo or describe what you ate first."); return; }
     setStatus("analyzing"); setError("");
     try {
       const data = await analyzeMeal(blob, note.trim());
-      if (!data.items?.length) {
-        throw new Error(blob
-          ? "No food was found in this photo. Try a clearer picture of the plate."
-          : "Couldn't find any food in that. Add a little more detail, like '2 chapati and dal'.");
-      }
-      setResult({ ...data, source: "ai" });
+      if (!data.items?.length) throw new Error("No food was found. Try a clearer photo or a little more detail.");
+      setItems((list) => [...list, ...data.items.map((it) => ({ key: newKey(), foodId: null, qty: null, ...it }))]);
+      setAiTips(data.tips || []);
     } catch (err) { setError(err.message); }
     finally { setStatus("idle"); }
   };
 
-  // No AI: open the editor with one row named after the description
-  const enterManually = () => {
-    setError("");
-    setResult({ items: [{ ...BLANK, name: note.trim().slice(0, 80) }], tips: [], summary: note.trim(), source: "manual" });
-  };
-
-  const items = result?.items || [];
+  const named = items.filter((it) => String(it.name).trim());
   const totals = sumItems(items);
-
-  const editItem = (i, key, val) =>
-    setResult((r) => ({ ...r, items: r.items.map((it, j) => (j === i ? { ...it, [key]: val } : it)) }));
-  const removeItem = (i) => setResult((r) => ({ ...r, items: r.items.filter((_, j) => j !== i) }));
-  const addItem = () => setResult((r) => ({ ...r, items: [...r.items, { ...BLANK }] }));
+  const tips = aiTips.length ? aiTips : mealTips(named);
 
   const save = async () => {
+    if (!named.length) { setError("Add at least one food."); return; }
     setStatus("saving"); setError("");
     try {
-      const clean = items
-        .filter((it) => String(it.name).trim())
-        .map((it) => ({ ...it, name: String(it.name).trim(), ...Object.fromEntries(NUM.map((k) => [k, Number(it[k]) || 0])) }));
-      if (!clean.length) throw new Error("add at least one food with a name.");
-      const fields = {
-        date, mealType, items: clean, totals: sumItems(clean), tips: result.tips || [],
-        summary: result.summary || note.trim() || clean.map((it) => it.name).join(", "),
-      };
+      const clean = named.map((it) => {
+        const out = {
+          name: String(it.name).trim(),
+          portion: String(it.portion || "").trim(),
+          ...Object.fromEntries(NUM.map((k) => [k, Math.round((Number(it[k]) || 0) * 10) / 10])),
+        };
+        if (it.foodId) Object.assign(out, { foodId: it.foodId, qty: it.qty });
+        return out;
+      });
+      const fields = { date, mealType, items: clean, totals: sumItems(clean), tips, summary: summarize(clean) };
       if (editId) {
         await updateMeal(user.uid, editId, fields);
         toast("Meal updated");
@@ -154,14 +199,22 @@ export default function AddMeal({ editId }) {
     } catch (err) { setError(`Couldn't delete: ${err.message}`); }
   };
 
-  const reset = () => {
-    if (blob) URL.revokeObjectURL(preview);
-    setMode("pick"); setBlob(null); setPreview(""); setResult(null); setNote(""); setError("");
-  };
   const g = userData.goals;
 
+  if (status === "loading") {
+    return <div className="page narrow"><header className="page-head"><h1>Edit meal</h1></header><section className="card"><div className="spinner sm" /></section></div>;
+  }
+  if (editId && !items.length && error) {
+    return (
+      <div className="page narrow">
+        <header className="page-head"><h1>Edit meal</h1></header>
+        <section className="card"><p className="error">{error}</p><button className="btn btn-ghost" onClick={back}>Go back</button></section>
+      </div>
+    );
+  }
+
   return (
-    <div className="page narrow">
+    <div className={`page add-page ${editId ? "editing" : ""}`}>
       <header className="page-head">
         <h1>{editId ? "Edit meal" : "Add a meal"}</h1>
       </header>
@@ -169,50 +222,59 @@ export default function AddMeal({ editId }) {
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={pick} />
       <input ref={galleryRef} type="file" accept="image/*" hidden onChange={pick} />
 
-      {mode === "pick" && (
-        <section className="card picker">
-          <div className="picker-art" aria-hidden="true"><Camera size={40} /></div>
-          <h2>Photograph your plate from above</h2>
-          <p className="muted">Good light and the whole plate in frame give the best estimate.</p>
-          <div className="picker-btns">
-            <button className="btn btn-primary btn-lg" onClick={() => cameraRef.current.click()}>
-              <Camera size={20} /> Take photo
-            </button>
-            <button className="btn btn-ghost btn-lg" onClick={() => galleryRef.current.click()}>
-              <ImagePlus size={20} /> Choose from gallery
-            </button>
-          </div>
-          <button className="link-btn" onClick={() => { setError(""); setMode("text"); }}>
-            <PenLine size={16} /> No photo? Type what you ate
-          </button>
-          {error && <p className="error">{error}</p>}
-        </section>
-      )}
-
-      {mode !== "pick" && status === "loading" && <section className="card"><div className="spinner sm" /></section>}
-
-      {mode !== "pick" && status !== "loading" && editId && !result && (
+      <div className="add-layout">
         <section className="card">
-          <p className="error">{error || "This meal couldn't be opened."}</p>
-          <button className="btn btn-ghost" onClick={back}>Go back</button>
-        </section>
-      )}
+          <label className="search">
+            <Search size={18} />
+            <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search: idli, chicken curry, banana…" aria-label="Search foods" />
+            {searching && (
+              <button type="button" className="search-clear" onClick={() => setQuery("")} aria-label="Clear search"><X size={16} /></button>
+            )}
+          </label>
 
-      {mode !== "pick" && status !== "loading" && (!editId || result) && (
-        <div className={preview ? "add-grid" : "stack"}>
-          {preview && (
-            <section className="card photo-card">
-              <div className={`photo ${status === "analyzing" ? "scanning" : ""}`}>
-                <img src={preview} alt="Your meal" />
-              </div>
-              {!editId && <button className="btn btn-ghost small-btn" onClick={reset}><RotateCcw size={16} /> Use a different photo</button>}
-            </section>
+          {!searching && (
+            <div className="chips" role="tablist" aria-label="Food groups">
+              {chips.map(([k, label]) => (
+                <button type="button" key={k} role="tab" aria-selected={activeCategory === k}
+                  className={`chip ${activeCategory === k ? "on" : ""}`} onClick={() => setCategory(k)}>{label}</button>
+              ))}
+            </div>
           )}
 
-          <section className="card form-card">
-            {mode === "text" && (
-              <button className="link-btn back-link" onClick={reset}><RotateCcw size={15} /> Start over</button>
-            )}
+          <ul className="pick-list" key={searching ? "search" : activeCategory}>
+            {list.map((food) => {
+              const qty = qtyOf(food);
+              return (
+                <li key={food.id} className={`pick-row ${qty ? "picked" : ""}`}>
+                  <div className="pick-info">
+                    <b>{food.name}</b>
+                    <span>{food.portion} · {food.cal} kcal · {food.p} g protein</span>
+                  </div>
+                  {qty ? (
+                    <Stepper qty={qty} name={food.name} onStep={(d) => changeFood(food, d)} />
+                  ) : (
+                    <button type="button" className="btn btn-ghost icon" onClick={() => changeFood(food, 1)} aria-label={`Add ${food.name}`}>
+                      <Plus size={18} />
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {searching && !list.length && <p className="muted">No match for “{query.trim()}”.</p>}
+          <button type="button" className="link-btn" onClick={() => addOwn(searching && !list.length ? query.trim() : "")}>
+            <Plus size={16} /> {searching && !list.length ? `Add “${query.trim()}” as your own food` : "Add your own food"}
+          </button>
+          <p className="muted small">Typical home portions. Change the amounts, or add oil and ghee, if yours were different.</p>
+        </section>
+
+        <div className="add-side">
+          <section className="card">
+            <div className="card-head">
+              <h2>Your meal</h2>
+              <span className="muted small">{named.length} item{named.length === 1 ? "" : "s"}</span>
+            </div>
             <div className="field-row">
               <label className="field">
                 <span>Meal</span>
@@ -222,82 +284,104 @@ export default function AddMeal({ editId }) {
               </label>
               <label className="field">
                 <span>Date</span>
-                <input type="date" value={date} max={todayKey()} onChange={(e) => setDate(e.target.value)} />
+                <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} />
               </label>
             </div>
 
-            {!result && (
+            <div className="result-totals">
+              <Total value={totals.calories} label="kcal" pct={Math.round((totals.calories / g.calories) * 100)} />
+              <Total className="t-p" value={totals.protein} unit="g" label="protein" pct={Math.round((totals.protein / g.protein) * 100)} />
+              <Total value={totals.carbs} unit="g" label="carbs" />
+              <Total value={totals.fat} unit="g" label="fat" />
+            </div>
+
+            {items.length === 0 ? (
+              <p className="muted">Nothing added yet. Search for a food or pick one from the list.</p>
+            ) : (
+              <ul className="meal-items">
+                {items.map((it) => (it.foodId ? (
+                  <li key={it.key} className="meal-item">
+                    <div className="pick-info">
+                      <b>{it.name}</b>
+                      <span>{it.portion} · {Math.round(it.calories)} kcal · {Math.round(it.protein)} g protein</span>
+                    </div>
+                    <Stepper qty={it.qty} name={it.name} onStep={(d) => changeFood(findFood(it.foodId), d)} />
+                  </li>
+                ) : (
+                  <li key={it.key} className="edit-item">
+                    <div className="edit-name">
+                      <input value={it.name} onChange={(e) => editItem(it.key, "name", e.target.value)} placeholder="Food name" aria-label="Food name" />
+                      <input value={it.portion} onChange={(e) => editItem(it.key, "portion", e.target.value)} placeholder="Portion" aria-label="Portion" className="portion" />
+                      <button type="button" className="btn btn-ghost icon" onClick={() => removeItem(it.key)} aria-label={`Remove ${it.name || "this food"}`}><Trash2 size={16} /></button>
+                    </div>
+                    <div className="edit-nums">
+                      {NUM.map((k) => (
+                        <label key={k}>
+                          <span>{LABEL[k]}</span>
+                          <input type="number" inputMode="decimal" min="0" value={it[k]} onChange={(e) => editItem(it.key, k, e.target.value)} />
+                        </label>
+                      ))}
+                    </div>
+                  </li>
+                )))}
+              </ul>
+            )}
+
+            {tips.length > 0 && (
+              <div className="tip-box">
+                <h3>For skin & hair</h3>
+                <ul>{tips.map((t) => <li key={t}>{t}</li>)}</ul>
+              </div>
+            )}
+            {editId && (
+              <button type="button" className="btn btn-ghost danger btn-block" onClick={remove}><Trash2 size={16} /> Delete meal</button>
+            )}
+          </section>
+
+          <section className="card photo-card">
+            <div className="card-head">
+              <h2>Photo</h2>
+              <span className="muted small">optional</span>
+            </div>
+            {preview ? (
+              <>
+                <div className={`photo ${status === "analyzing" ? "scanning" : ""}`}><img src={preview} alt="Your meal" /></div>
+                {!editId && <button type="button" className="btn btn-ghost small-btn" onClick={removePhoto}><X size={16} /> Remove photo</button>}
+              </>
+            ) : editId ? (
+              <p className="muted small">No photo with this meal.</p>
+            ) : (
+              <>
+                <p className="muted small">Keep a picture of your plate with the meal.</p>
+                <div className="photo-btns">
+                  <button type="button" className="btn btn-ghost small-btn" onClick={() => cameraRef.current.click()}><Camera size={16} /> Take photo</button>
+                  <button type="button" className="btn btn-ghost small-btn" onClick={() => galleryRef.current.click()}><ImagePlus size={16} /> Gallery</button>
+                </div>
+              </>
+            )}
+            {AI_ENABLED && !editId && (
               <>
                 <label className="field">
-                  <span>{blob ? "Anything the photo can't show? (optional)" : "What did you eat?"}</span>
-                  {blob ? (
-                    <input value={note} onChange={(e) => setNote(e.target.value)}
-                      placeholder="e.g. 3 idli, cooked in ghee, 1 cup sambar" maxLength={300} />
-                  ) : (
-                    <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} autoFocus
-                      placeholder="e.g. 2 dosa, 1 cup sambar, coconut chutney, 1 boiled egg" maxLength={300} />
-                  )}
+                  <span>Describe it for the AI (optional with a photo)</span>
+                  <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={300}
+                    placeholder="e.g. 2 dosa, 1 cup sambar, 1 boiled egg" />
                 </label>
-                <button className="btn btn-primary btn-lg btn-block" onClick={analyze} disabled={status === "analyzing"}>
-                  <Sparkles size={19} />
-                  {status === "analyzing" ? (blob ? "Reading your plate…" : "Working it out…") : "Calculate calories & protein"}
+                <button type="button" className="btn btn-ghost" onClick={estimate} disabled={status === "analyzing"}>
+                  <Sparkles size={17} /> {status === "analyzing" ? "Estimating…" : "Estimate with AI"}
                 </button>
-                {!blob && <button className="link-btn" onClick={enterManually}>Or type the numbers myself</button>}
               </>
             )}
-
-            {result && (
-              <>
-                <div className="result-totals">
-                  <Total value={totals.calories} label="kcal" pct={Math.round((totals.calories / g.calories) * 100)} />
-                  <Total className="t-p" value={totals.protein} unit="g" label="protein" pct={Math.round((totals.protein / g.protein) * 100)} />
-                  <Total value={totals.carbs} unit="g" label="carbs" />
-                  <Total value={totals.fat} unit="g" label="fat" />
-                </div>
-
-                <p className="muted small">{HINT[result.source]}</p>
-
-                <div className="edit-items">
-                  {items.map((it, i) => (
-                    <div className="edit-item" key={i}>
-                      <div className="edit-name">
-                        <input value={it.name} onChange={(e) => editItem(i, "name", e.target.value)} placeholder="Food name" aria-label="Food name" />
-                        <input value={it.portion} onChange={(e) => editItem(i, "portion", e.target.value)} placeholder="Portion" aria-label="Portion" className="portion" />
-                        <button className="btn btn-ghost icon" onClick={() => removeItem(i)} aria-label={`Remove ${it.name || "this item"}`}><Trash2 size={16} /></button>
-                      </div>
-                      <div className="edit-nums">
-                        {NUM.map((k) => (
-                          <label key={k}>
-                            <span>{LABEL[k]}</span>
-                            <input type="number" inputMode="decimal" min="0" value={it[k]}
-                              onChange={(e) => editItem(i, k, e.target.value)} />
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  <button className="btn btn-ghost small-btn" onClick={addItem}><Plus size={16} /> Add an item</button>
-                </div>
-
-                {result.tips?.length > 0 && (
-                  <div className="tip-box">
-                    <h3>For skin & hair</h3>
-                    <ul>{result.tips.map((t, i) => <li key={i}>{t}</li>)}</ul>
-                  </div>
-                )}
-
-                <button className="btn btn-primary btn-lg btn-block" onClick={save} disabled={status === "saving" || !items.length}>
-                  {status === "saving" ? "Saving…" : editId ? "Save changes" : "Save meal"}
-                </button>
-                {editId && (
-                  <button className="btn btn-ghost danger btn-block" onClick={remove}><Trash2 size={16} /> Delete meal</button>
-                )}
-              </>
-            )}
-            {error && <p className="error">{error}</p>}
           </section>
         </div>
-      )}
+      </div>
+
+      {error && <p className="error">{error}</p>}
+      <div className="save-bar">
+        <p><b>{Math.round(totals.calories).toLocaleString("en-IN")} kcal</b><span>{Math.round(totals.protein)} g protein</span></p>
+        <button type="button" className="btn btn-primary" onClick={save} disabled={status === "saving" || !named.length}>
+          {status === "saving" ? "Saving…" : editId ? "Save changes" : "Save meal"}
+        </button>
+      </div>
     </div>
   );
 }

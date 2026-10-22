@@ -1,5 +1,5 @@
 import { NavLink, Outlet, Link } from "react-router-dom";
-import { Home, CalendarDays, Leaf, UserRound, Camera } from "lucide-react";
+import { Home, CalendarDays, Leaf, UserRound, Plus } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 
 const NAV = [
@@ -27,7 +27,7 @@ export default function Layout() {
           <span>GlowPlate</span>
         </Link>
         <Link to="/add" className="btn btn-primary btn-block side-add">
-          <Camera size={18} /> Add a meal
+          <Plus size={18} /> Add a meal
         </Link>
         <nav className="side-nav">
           {NAV.map(({ to, label, icon: Icon, end }) => (
@@ -55,7 +55,7 @@ export default function Layout() {
           </NavLink>
         ))}
         <Link to="/add" className="tab-add" aria-label="Add a meal">
-          <Camera size={24} />
+          <Plus size={26} />
         </Link>
         {NAV.slice(2).map(({ to, label, icon: Icon }) => (
           <NavLink key={to} to={to} className="tab">

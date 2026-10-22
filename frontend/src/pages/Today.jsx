@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Camera, Flame } from "lucide-react";
+import { Flame, Plus } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { useDayLog } from "../hooks/useDayLog";
 import { useNow } from "../hooks/useNow";
@@ -93,7 +93,7 @@ export default function Today() {
             </Link>
           )}
         </div>
-        <Link to="/add" className="btn btn-primary hide-mobile"><Camera size={18} /> Add a meal</Link>
+        <Link to="/add" className="btn btn-primary hide-mobile"><Plus size={18} /> Add a meal</Link>
       </header>
 
       <Nudges items={prompts} uid={user.uid} date={date} onDismiss={dismiss} />
@@ -123,8 +123,8 @@ export default function Today() {
           {!log.ready && <div className="spinner sm" />}
           {log.ready && meals.length === 0 && (
             <Link to="/add" className="empty-cta">
-              <Camera size={28} />
-              <span><b>Log your first meal</b><br />Take a photo of your plate, or type what you ate, and get the calories and protein in seconds.</span>
+              <Plus size={28} />
+              <span><b>Log your first meal</b><br />Pick what you ate from the food list and see the calories and protein straight away.</span>
             </Link>
           )}
           <div className="meal-list">
